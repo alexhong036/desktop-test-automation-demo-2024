@@ -1,0 +1,129 @@
+name: Build the library
+
+on:
+  [push, pull_request]
+
+jobs:
+  # Build library with `jar` Gradle task
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      # Check out current repository & ref
+      - name: Fetch Sources
+        uses: actions/checkout@v2.3.4
+
+      # Setup java and make utilize gradle-cache
+      - name: Setup java
+        uses: actions/setup-java@v2
+        with:
+          distribution: 'temurin'
+          java-version: 17
+
+      - name: Setup gradle
+        uses: gradle/gradle-build-action@v2
+
+      # Build artifact
+      - name: Build Library
+        env:
+          GH_REPO_USERNAME: ${{ secrets.ACCESS_TOKEN_USER_GITHUB }}
+          GH_REPO_TOKEN: ${{ secrets.ACCESS_TOKEN_PASSWORD_GITHUB }}
+        run: ./gradlew build
+
+      # Start a dry run
+      - name: RF Dryrun Test
+        env:
+          GH_REPO_USERNAME: ${{ secrets.ACCESS_TOKEN_USER_GITHUB }}
+          GH_REPO_TOKEN: ${{ secrets.ACCESS_TOKEN_PASSWORD_GITHUB }}
+        run: ./gradlew dryrun
+
+      - name: Run tests
+        env:
+          env: stage # this can also be set more global
+        run: ./gradlew allTests
+
+      - name: Attach reports
+        uses: actions/upload-artifact@v2.2.3
+        if: always() # We want to get reports even if tests failed!
+        with:
+          name: test-report
+          path: |
+            ./build/robot-reports
+            ./protocols/*/**
+
+  # Prepare a draft release for GitHub Releases page for the manual verification
+  # (If accepted and published, a release workflow could be triggered)
+  releaseDraft:
+    name: Release Draft
+    if: ('main' == github.ref_name) && (github.event_name != 'pull_request')
+    needs: [ build ]
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      # Check out current repository
+      - name: Fetch Sources
+        uses: actions/checkout@v2.3.4
+
+      # Setup java and make utilize gradle-cache
+      - uses: actions/setup-java@v2
+        with:
+          distribution: 'temurin'
+          java-version: 17
+
+      - name: Setup gradle
+        uses: gradle/gradle-build-action@v2
+
+      # Set environment variables
+      - name: Export Properties
+        id: properties
+        shell: bash
+        run: |
+          PROPERTIES="$(./gradlew properties --console=plain -q)"
+          VERSION="$(echo "$PROPERTIES" | grep "^version:" | cut -f2- -d ' ')"
+          NAME="$(echo "$PROPERTIES" | grep "^name:" | cut -f2- -d ' ')"
+          ARTIFACT="${NAME}-${VERSION}.jar"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "name=$NAME" >> $GITHUB_OUTPUT
+          echo "artifact=$ARTIFACT" >> $GITHUB_OUTPUT
+
+      # publish artifact if it is a snapshot
+      - name: Publish snapshot
+        if: endsWith(steps.properties.outputs.version, 'snapshot')
+        env:
+          TOKEN: ${{ github.token }}
+          USERNAME: ${{ github.actor }}
+          GH_REPO_USERNAME: ${{ secrets.ACCESS_TOKEN_USER_GITHUB }}
+          GH_REPO_TOKEN: ${{ secrets.ACCESS_TOKEN_PASSWORD_GITHUB }}
+        run: ./gradlew publish
+
+      # Remove old release drafts by using the curl request for the available releases with draft flag
+      - name: Remove Old Release Drafts
+        run: |
+          curl -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/$GITHUB_REPOSITORY/releases \
+            | tr '\r\n' ' ' \
+            | jq '.[] | select(.draft == true) | .id' \
+            | xargs -I '{}' \
+          curl -X DELETE -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/$GITHUB_REPOSITORY/releases/{}
+
+      # Create new release draft - which is not publicly visible and requires manual acceptance
+      - name: Create Release Draft
+        id: createDraft
+        uses: actions/create-release@v1.1.4
+        with:
+          tag_name: v${{ steps.properties.outputs.version }}
+          release_name: v${{ steps.properties.outputs.version }}
+          body: Release of ${{ steps.properties.outputs.version }}
+          draft: true
+
+      # Upload artifacts as a release asset
+      - name: Upload Release Asset
+        id: upload-release-asset
+        uses: actions/upload-release-asset@v1.0.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.createDraft.outputs.upload_url }}
+          asset_path: ./build/libs/${{ steps.properties.outputs.artifact }}
+          asset_name: ${{ steps.properties.outputs.artifact }}
+          asset_content_type: application/jar

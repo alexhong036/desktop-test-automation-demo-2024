@@ -1,0 +1,77 @@
+<configuration>
+  <timestamp key="DATE" datePattern="yyyyMMdd"/>
+  <timestamp key="TIME" datePattern="HHmmss"/>
+
+  <property name="PATTERN" value="%d{HH:mm:ss.SSS} [%X{SuiteId}-%X{TestId}] %-5level %logger{36} - %msg%n"/>
+
+  <springProperty name="SPR_LOGS_FOLDER" source="dataDirs.protocolDir" defaultValue="./build/logs"/>
+  <property name="LOGS_FOLDER" value="${SPR_LOGS_FOLDER}/${DATE}"/>
+  <property name="START_TMSTMP" value="${DATE}_${TIME}" />
+
+  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+      <level>INFO</level>
+    </filter>
+    <encoder>
+      <charset>UTF-8</charset>
+      <pattern>${PATTERN}</pattern>
+    </encoder>
+  </appender>
+
+  <appender name="TESTCASE" class="ch.qos.logback.classic.sift.SiftingAppender">
+    <discriminator>
+      <key>TestId</key>
+      <defaultValue>Exec</defaultValue>
+    </discriminator>
+    <sift>
+      <appender name="FILE-${TestId}" class="ch.qos.logback.core.FileAppender">
+        <file>${LOGS_FOLDER}/${START_TMSTMP}-${TestId}-run.log</file>
+        <append>false</append>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+          <level>INFO</level>
+        </filter>
+        <encoder>
+          <charset>UTF-8</charset>
+          <pattern>${PATTERN}</pattern>
+        </encoder>
+      </appender>
+    </sift>
+  </appender>
+  <appender name="FILE" class="ch.qos.logback.core.FileAppender">
+    <!-- use the same folder as for storing test-execution protocols -->
+    <file>${LOGS_FOLDER}/${START_TMSTMP}-testrun.log</file>
+    <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+      <level>INFO</level>
+    </filter>
+    <encoder>
+      <charset>UTF-8</charset>
+      <pattern>${PATTERN}</pattern>
+    </encoder>
+  </appender>
+
+  <!-- Log debug stuff to additional file -->
+  <appender name="FILE_DEBUG" class="ch.qos.logback.core.FileAppender">
+    <!-- use the same folder as for storing test-execution protocols -->
+    <file>${LOGS_FOLDER}/${START_TMSTMP}-testrun-debug.log</file>
+    <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+      <level>DEBUG</level>
+    </filter>
+    <encoder>
+      <charset>UTF-8</charset>
+      <pattern>${PATTERN}</pattern>
+    </encoder>
+  </appender>
+
+  <!-- Only log errors from the selenium libs even if common log level is finer -->
+  <logger name="org.openqa.selenium" level="ERROR"/>
+
+  <logger name="de.arvato.aep" level="DEBUG">
+    <appender-ref ref="FILE_DEBUG"/>
+  </logger>
+  <root level="DEBUG">
+    <appender-ref ref="STDOUT"/>
+    <appender-ref ref="FILE"/>
+    <!-- appender-ref ref="FILE_DEBUG"/ -->
+    <appender-ref ref="TESTCASE" />
+  </root>
+</configuration>
